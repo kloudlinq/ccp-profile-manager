@@ -1,0 +1,11 @@
+{
+  "name": "ccp-profile-manager-workspace",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build:core": "npm run build -w packages/core",
+    "build:ext": "npm run build -w packages/vscode-extension",
+    "build": "npm run build:core && npm run build:ext",
+    "package:ext": "npm run build:ext && npm run package -w packages/vscode-extension"
+  }
+}

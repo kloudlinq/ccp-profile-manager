@@ -1,0 +1,37 @@
+{
+  "name": "ccp-profile-manager",
+  "displayName": "Claude Code Profile Manager",
+  "description": "Switch between Claude Code identities (subscription, API key, gateway, Bedrock, Vertex, Foundry) from VS Code.",
+  "version": "0.1.0",
+  "publisher": "kloudlinq",
+  "engines": { "vscode": "^1.98.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "ccp.switchProfile", "title": "Claude Profile: Switch..." },
+      { "command": "ccp.newProfile", "title": "Claude Profile: New / Login..." },
+      { "command": "ccp.manageProfiles", "title": "Claude Profile: Manage..." },
+      { "command": "ccp.pinWorkspaceProfile", "title": "Claude Profile: Pin This Workspace To..." },
+      { "command": "ccp.applyMcpConfig", "title": "Claude Profile: Apply MCP Server Set..." },
+      { "command": "ccp.doctor", "title": "Claude Profile: Run Doctor..." },
+      { "command": "ccp.exportProfile", "title": "Claude Profile: Export..." },
+      { "command": "ccp.importProfile", "title": "Claude Profile: Import..." }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p . && node ./esbuild.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@kloudlinq/ccp-core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.98.0",
+    "@types/node": "^22.5.0",
+    "typescript": "^5.6.0",
+    "esbuild": "^0.23.0",
+    "@vscode/vsce": "^3.1.0"
+  }
+}

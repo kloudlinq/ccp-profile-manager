@@ -1,0 +1,23 @@
+{
+  "name": "@kloudlinq/ccp-core",
+  "version": "0.1.0",
+  "description": "Claude Code profile manager - core CLI and shared logic",
+  "license": "UNLICENSED",
+  "private": true,
+  "bin": {
+    "ccp-bin": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "tsc -p . --watch"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.5.0"
+  }
+}
