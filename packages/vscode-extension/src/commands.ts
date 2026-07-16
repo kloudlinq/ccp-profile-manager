@@ -1,21 +1,20 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import {
   AuthType,
   listProfiles,
   getProfile,
   deleteProfile,
-  saveProfile,
   defaultConfigDirFor,
-  setSecret,
   deleteSecret,
-  ProfileConfig,
   applyMcpServers,
   currentMcpServerNames,
   runDoctor,
   exportProfile,
   finalizeImportedProfile,
+  finalizeNewProfile,
+  validateProfileName,
+  NewProfileInput,
   ExportedProfile,
 } from '@kloudlinq/ccp-core';
 import { applyProfile } from './applyProfile';
@@ -58,10 +57,16 @@ async function switchProfile(context: vscode.ExtensionContext): Promise<void> {
   await applyProfile(context, picked.profile);
 }
 
+/**
+ * Collects inputs only — all persistence (keychain, config dir, OpenRouter
+ * statusLine, the profile record itself) happens in core's
+ * finalizeNewProfile, the same path the CLI and the import flow use, so
+ * creation behavior can't drift between surfaces.
+ */
 async function newProfile(context: vscode.ExtensionContext): Promise<void> {
   const name = await vscode.window.showInputBox({
     prompt: 'Profile name (e.g. personal, accenture, wgu)',
-    validateInput: (v) => (/^[a-z0-9-]+$/i.test(v) ? undefined : 'Letters, numbers, and hyphens only'),
+    validateInput: (v) => validateProfileName(v) ?? undefined,
   });
   if (!name) return;
 
@@ -76,39 +81,17 @@ async function newProfile(context: vscode.ExtensionContext): Promise<void> {
   );
   if (!typePick) return;
 
-  const claudeConfigDir = defaultConfigDirFor(name);
-  const now = new Date().toISOString();
-  const profile: ProfileConfig = {
-    name,
-    authType: typePick.value,
-    claudeConfigDir,
-    owner: os.userInfo().username,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const input: NewProfileInput = { name, authType: typePick.value };
 
   switch (typePick.value) {
-    case 'subscription': {
-      // The GUI extension can't inherit an interactive TTY the way the CLI
-      // spawn can. Open an integrated terminal instead and let the user run
-      // the OAuth flow there — this profile becomes usable once /login completes.
-      const term = vscode.window.createTerminal({
-        name: `Claude login: ${name}`,
-        env: { CLAUDE_CONFIG_DIR: claudeConfigDir },
-      });
-      term.show();
-      term.sendText('claude');
-      vscode.window.showInformationMessage(
-        `Complete the browser sign-in in the "Claude login: ${name}" terminal, then come back and switch to this profile.`
-      );
+    case 'subscription':
+      // Nothing to collect — the OAuth flow runs in an integrated terminal
+      // after the profile record exists (below).
       break;
-    }
     case 'api_key': {
       const key = await vscode.window.showInputBox({ prompt: 'Anthropic API key', password: true });
       if (!key) return;
-      const account = `${name}-api-key`;
-      await setSecret(account, key);
-      profile.keychainAccount = account;
+      input.apiKey = key;
       break;
     }
     case 'gateway': {
@@ -120,31 +103,64 @@ async function newProfile(context: vscode.ExtensionContext): Promise<void> {
       const token = await vscode.window.showInputBox({ prompt: 'Gateway API token', password: true });
       if (!token) return;
       const model = await vscode.window.showInputBox({ prompt: 'Default model slug (optional)' });
-      const account = `${name}-gateway-token`;
-      await setSecret(account, token);
-      profile.keychainAccount = account;
-      profile.gatewayBaseUrl = baseUrl;
-      if (model) profile.gatewayModel = model;
+      if (model === undefined) return; // Esc — treat as cancel, unlike an intentional blank
+      input.gatewayBaseUrl = baseUrl;
+      input.gatewayToken = token;
+      if (model) input.gatewayModel = model;
       break;
     }
     case 'bedrock': {
-      profile.awsProfile = await vscode.window.showInputBox({ prompt: 'AWS profile name (never "default")' });
-      profile.awsRegion = await vscode.window.showInputBox({ prompt: 'AWS region', value: 'us-east-2' });
+      const awsProfile = await vscode.window.showInputBox({ prompt: 'AWS profile name (never "default")' });
+      if (awsProfile === undefined) return;
+      const awsRegion = await vscode.window.showInputBox({ prompt: 'AWS region', value: 'us-east-2' });
+      if (awsRegion === undefined) return;
+      input.awsProfile = awsProfile || undefined;
+      input.awsRegion = awsRegion || undefined;
       break;
     }
     case 'vertex': {
-      profile.vertexProject = await vscode.window.showInputBox({ prompt: 'GCP project ID' });
-      profile.vertexRegion = await vscode.window.showInputBox({ prompt: 'Vertex region', value: 'us-central1' });
+      const vertexProject = await vscode.window.showInputBox({ prompt: 'GCP project ID' });
+      if (vertexProject === undefined) return;
+      const vertexRegion = await vscode.window.showInputBox({ prompt: 'Vertex region', value: 'us-central1' });
+      if (vertexRegion === undefined) return;
+      input.vertexProject = vertexProject || undefined;
+      input.vertexRegion = vertexRegion || undefined;
       break;
     }
     case 'foundry': {
-      profile.foundryResource = await vscode.window.showInputBox({ prompt: 'Foundry resource name' });
+      const foundryResource = await vscode.window.showInputBox({ prompt: 'Foundry resource name' });
+      if (foundryResource === undefined) return;
+      input.foundryResource = foundryResource || undefined;
       break;
     }
   }
 
-  await saveProfile(profile);
-  vscode.window.showInformationMessage(`Created profile "${name}" (${typePick.value}).`);
+  try {
+    const { profile, costStatusLine } = await finalizeNewProfile(input);
+
+    if (typePick.value === 'subscription') {
+      // The GUI extension can't inherit an interactive TTY the way the CLI
+      // spawn can. Open an integrated terminal instead and let the user run
+      // the OAuth flow there — this profile becomes usable once /login completes.
+      const term = vscode.window.createTerminal({
+        name: `Claude login: ${name}`,
+        env: { CLAUDE_CONFIG_DIR: profile.claudeConfigDir },
+      });
+      term.show();
+      term.sendText('claude');
+      vscode.window.showInformationMessage(
+        `Complete the browser sign-in in the "Claude login: ${name}" terminal, then come back and switch to this profile.`
+      );
+      return;
+    }
+
+    vscode.window.showInformationMessage(
+      `Created profile "${name}" (${typePick.value}).` +
+        (costStatusLine === 'applied' ? ' OpenRouter detected — cost statusLine added to its settings.json.' : '')
+    );
+  } catch (err) {
+    vscode.window.showErrorMessage(`Failed to create profile: ${(err as Error).message}`);
+  }
 }
 
 async function manageProfiles(context: vscode.ExtensionContext): Promise<void> {
@@ -296,7 +312,12 @@ async function importProfileCommand(): Promise<void> {
     });
     term.show();
     term.sendText('claude');
-    await finalizeImportedProfile(exported, {});
+    try {
+      await finalizeImportedProfile(exported, {});
+    } catch (err) {
+      vscode.window.showErrorMessage(`Import failed: ${(err as Error).message}`);
+      return;
+    }
     vscode.window.showInformationMessage(
       `Imported "${exported.name}". Complete sign-in in the "Claude login: ${exported.name}" terminal.`
     );
@@ -327,6 +348,10 @@ async function importProfileCommand(): Promise<void> {
       break;
   }
 
-  const profile = await finalizeImportedProfile(exported, secrets);
-  vscode.window.showInformationMessage(`Imported profile "${profile.name}" (${profile.authType}).`);
+  try {
+    const profile = await finalizeImportedProfile(exported, secrets);
+    vscode.window.showInformationMessage(`Imported profile "${profile.name}" (${profile.authType}).`);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Import failed: ${(err as Error).message}`);
+  }
 }

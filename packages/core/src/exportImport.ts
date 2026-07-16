@@ -1,9 +1,8 @@
-import * as os from 'node:os';
 import { AuthType, ProfileConfig } from './types';
-import { getProfile, saveProfile, defaultConfigDirFor } from './profileStore';
-import { setSecret } from './keychain';
+import { getProfile, defaultConfigDirFor } from './profileStore';
 import { ask, askSecret } from './prompt';
 import { runInteractiveLoginForImport } from './authFlows';
+import { finalizeNewProfile } from './profileFactory';
 
 /**
  * Everything about a profile EXCEPT: the machine-specific claudeConfigDir
@@ -56,64 +55,33 @@ export interface ImportSecrets {
  * Subscription-type profiles are NOT finished here: OAuth needs a real TTY
  * (CLI) or an integrated terminal (VSIX), so each surface drives that part
  * itself and calls this only for the non-interactive types.
+ *
+ * Delegates to finalizeNewProfile — the same persistence path as `create` on
+ * both surfaces — so imports get identical behavior (name validation, config
+ * dir creation, OpenRouter statusLine) instead of a parallel implementation.
  */
 export async function finalizeImportedProfile(
   exported: ExportedProfile,
   secrets: ImportSecrets
 ): Promise<ProfileConfig> {
-  const existing = await getProfile(exported.name);
-  if (existing) {
+  if (await getProfile(exported.name)) {
     throw new Error(`Profile "${exported.name}" already exists on this machine. Rename it in the export file first.`);
   }
 
-  const claudeConfigDir = defaultConfigDirFor(exported.name);
-  const now = new Date().toISOString();
-  const profile: ProfileConfig = {
+  const { profile } = await finalizeNewProfile({
     name: exported.name,
     authType: exported.authType,
-    claudeConfigDir,
-    owner: os.userInfo().username,
+    apiKey: secrets.apiKey,
     gatewayBaseUrl: exported.gatewayBaseUrl,
+    gatewayToken: secrets.gatewayToken,
     gatewayModel: exported.gatewayModel,
+    awsProfile: secrets.awsProfile,
     awsRegion: exported.awsRegion,
+    vertexProject: secrets.vertexProject,
     vertexRegion: exported.vertexRegion,
+    foundryResource: secrets.foundryResource,
     mcpConfigSource: exported.mcpConfigSource,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  switch (exported.authType) {
-    case 'api_key': {
-      if (!secrets.apiKey) throw new Error('apiKey required for authType "api_key"');
-      const account = `${exported.name}-api-key`;
-      await setSecret(account, secrets.apiKey);
-      profile.keychainAccount = account;
-      break;
-    }
-    case 'gateway': {
-      if (!secrets.gatewayToken) throw new Error('gatewayToken required for authType "gateway"');
-      const account = `${exported.name}-gateway-token`;
-      await setSecret(account, secrets.gatewayToken);
-      profile.keychainAccount = account;
-      break;
-    }
-    case 'bedrock':
-      profile.awsProfile = secrets.awsProfile;
-      break;
-    case 'vertex':
-      profile.vertexProject = secrets.vertexProject;
-      break;
-    case 'foundry':
-      profile.foundryResource = secrets.foundryResource;
-      break;
-    case 'subscription':
-      // Caller must run the OAuth flow (interactive terminal / integrated
-      // terminal) against `claudeConfigDir` themselves, before or after this
-      // call — credentials.json isn't managed by this function either way.
-      break;
-  }
-
-  await saveProfile(profile);
+  });
   return profile;
 }
 

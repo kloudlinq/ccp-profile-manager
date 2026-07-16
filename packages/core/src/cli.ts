@@ -5,6 +5,7 @@ import { AuthType } from './types';
 import { listProfiles, getProfile, deleteProfile } from './profileStore';
 import { resolveEnv, toShellScript } from './envManager';
 import { createProfile, deleteProfileSecrets } from './authFlows';
+import { validateProfileName } from './profileFactory';
 import { applyMcpServers, currentMcpServerNames } from './mcpConfig';
 import { runDoctor } from './doctor';
 import { exportProfile, importProfileInteractiveCli, ExportedProfile } from './exportImport';
@@ -21,6 +22,14 @@ program
   .action(async (name: string, opts: { type: string }) => {
     if (!VALID_TYPES.includes(opts.type as AuthType)) {
       console.error(`Invalid --type. Must be one of: ${VALID_TYPES.join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+    // Checked here, before any interactive prompt or OAuth flow, so a bad
+    // name fails immediately instead of after the user has typed a secret.
+    const nameError = validateProfileName(name);
+    if (nameError) {
+      console.error(nameError);
       process.exitCode = 1;
       return;
     }

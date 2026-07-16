@@ -3,6 +3,7 @@ export * from './profileStore';
 export * from './envManager';
 export * from './keychain';
 export * from './authFlows';
+export * from './profileFactory';
 export * from './mcpConfig';
 export * from './doctor';
 export * from './exportImport';

@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process';
-import * as os from 'node:os';
 import { promises as fs } from 'node:fs';
 import { AuthType, ProfileConfig } from './types';
-import { setSecret, deleteSecret } from './keychain';
+import { deleteSecret } from './keychain';
 import { ask, askSecret } from './prompt';
-import { defaultConfigDirFor, saveProfile } from './profileStore';
-import { applyCostStatusLine } from './statusLine';
+import { defaultConfigDirFor } from './profileStore';
+import { finalizeNewProfile, NewProfileInput } from './profileFactory';
 
 function findClaudeBinary(): string {
   // Assumes `claude` is on PATH (standalone CLI install). The VS Code
@@ -48,81 +47,63 @@ interface CreateOptions {
   owner?: string;
 }
 
+/**
+ * CLI-side creation: collects whatever the auth type needs on stdin/stdout
+ * (or runs the interactive OAuth spawn for subscription), then hands
+ * everything to finalizeNewProfile — the single shared persistence path,
+ * same one the VSIX and the import flow use.
+ */
 export async function createProfile(opts: CreateOptions): Promise<ProfileConfig> {
   const { name, authType } = opts;
-  const claudeConfigDir = defaultConfigDirFor(name);
-  const owner = opts.owner ?? os.userInfo().username;
-  const now = new Date().toISOString();
-
-  const profile: ProfileConfig = {
-    name,
-    authType,
-    claudeConfigDir,
-    owner,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const input: NewProfileInput = { name, authType, owner: opts.owner };
 
   switch (authType) {
     case 'subscription': {
-      await runInteractiveLogin(claudeConfigDir);
+      await runInteractiveLogin(defaultConfigDirFor(name));
       break;
     }
 
     case 'api_key': {
-      const key = await askSecret('Anthropic API key (sk-ant-...)');
-      const account = `${name}-api-key`;
-      await setSecret(account, key);
-      profile.keychainAccount = account;
-      await fs.mkdir(claudeConfigDir, { recursive: true, mode: 0o700 });
+      input.apiKey = await askSecret('Anthropic API key (sk-ant-...)');
       break;
     }
 
     case 'gateway': {
-      const baseUrl = await ask('Gateway base URL', 'https://openrouter.ai/api');
-      const token = await askSecret('Gateway API token');
+      input.gatewayBaseUrl = await ask('Gateway base URL', 'https://openrouter.ai/api');
+      input.gatewayToken = await askSecret('Gateway API token');
       const model = await ask('Default model slug (blank = leave unset)');
-      const account = `${name}-gateway-token`;
-      await setSecret(account, token);
-      profile.keychainAccount = account;
-      profile.gatewayBaseUrl = baseUrl;
-      if (model) profile.gatewayModel = model;
-      await fs.mkdir(claudeConfigDir, { recursive: true, mode: 0o700 });
-      const statusLineResult = await applyCostStatusLine(profile);
-      if (statusLineResult === 'applied') {
-        console.log('[ccp] OpenRouter detected — added a cost-usage statusLine to this profile\'s settings.json.');
-      }
+      if (model) input.gatewayModel = model;
       break;
     }
 
     case 'bedrock': {
-      profile.awsProfile = await ask('AWS profile name (never "default")');
-      profile.awsRegion = await ask('AWS region', 'us-east-2');
-      await fs.mkdir(claudeConfigDir, { recursive: true, mode: 0o700 });
+      input.awsProfile = await ask('AWS profile name (never "default")');
+      input.awsRegion = await ask('AWS region', 'us-east-2');
       console.log(
         '[ccp] No secret stored — Bedrock auth relies on your AWS CLI session ' +
-          `(\`aws sso login --profile ${profile.awsProfile}\`) being active when you switch to this profile.`
+          `(\`aws sso login --profile ${input.awsProfile}\`) being active when you switch to this profile.`
       );
       break;
     }
 
     case 'vertex': {
-      profile.vertexProject = await ask('GCP project ID');
-      profile.vertexRegion = await ask('Vertex region', 'us-central1');
-      await fs.mkdir(claudeConfigDir, { recursive: true, mode: 0o700 });
+      input.vertexProject = await ask('GCP project ID');
+      input.vertexRegion = await ask('Vertex region', 'us-central1');
       console.log('[ccp] No secret stored — Vertex auth relies on `gcloud auth login` / ADC.');
       break;
     }
 
     case 'foundry': {
-      profile.foundryResource = await ask('Foundry resource name');
-      await fs.mkdir(claudeConfigDir, { recursive: true, mode: 0o700 });
+      input.foundryResource = await ask('Foundry resource name');
       console.log('[ccp] No secret stored — Foundry auth relies on `az login` (Entra ID).');
       break;
     }
   }
 
-  await saveProfile(profile);
+  const { profile, costStatusLine } = await finalizeNewProfile(input);
+  if (costStatusLine === 'applied') {
+    console.log("[ccp] OpenRouter detected — added a cost-usage statusLine to this profile's settings.json.");
+  }
   return profile;
 }
 
