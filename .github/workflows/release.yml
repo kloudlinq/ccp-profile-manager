@@ -1,0 +1,32 @@
+name: Release
+
+# Fires on version tags (v0.1.0, v0.2.0, ...) pushed to the GitHub mirror.
+# Builds both packages, packages the extension, and attaches the .vsix to a
+# GitHub Release — that's the install path for the extension since it isn't
+# on the VS Code Marketplace.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run package:ext
+      - run: >
+          gh release create "$GITHUB_REF_NAME"
+          packages/vscode-extension/*.vsix
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

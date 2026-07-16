@@ -4,6 +4,12 @@
   "description": "Switch between Claude Code identities (subscription, API key, gateway, Bedrock, Vertex, Foundry) from VS Code.",
   "version": "0.1.0",
   "publisher": "kloudlinq",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kloudlinq/ccp-profile-manager.git",
+    "directory": "packages/vscode-extension"
+  },
   "engines": { "vscode": "^1.98.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
